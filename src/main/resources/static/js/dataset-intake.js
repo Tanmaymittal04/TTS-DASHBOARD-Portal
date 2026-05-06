@@ -1,357 +1,340 @@
-(function () {
-  'use strict';
+'use strict';
 
-  function init() {
-    const isDark = () =>
-      (document.documentElement.getAttribute('data-theme') || 'dark') === 'dark';
+const BASE = (window._ctx || '');
+let batchDT = null, chunkDT = null, failChart = null, qcChart = null;
+let activeCard = null;
 
-    const C = {
-      accent:'#6366f1', green:'#22c55e', red:'#ef4444',
-      amber:'#f59e0b', cyan:'#06b6d4', purple:'#a855f7',
-      pink:'#ec4899', orange:'#f97316',
-      a: (hex, op) => hex + Math.round(op * 255).toString(16).padStart(2,'0')
-    };
-
-    Chart.defaults.font.family = "'Inter', system-ui, -apple-system, sans-serif";
-    Chart.defaults.font.size   = 11;
-    Chart.defaults.color       = '#6b7280';
-
-    const gridColor  = () => isDark() ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.07)';
-    const tickColor  = () => isDark() ? '#6b7280' : '#9ca3af';
-    const tooltipBg  = () => isDark() ? '#1c1f2e' : '#ffffff';
-    const tooltipBdr = () => isDark() ? '#2e3150' : '#e5e7eb';
-
-    const xScale = () => ({
-      grid : { color: gridColor(), drawBorder: false },
-      ticks: { color: tickColor(), maxRotation: 0, font: { size: 11 } }
-    });
-    const yScale = (label) => ({
-      grid: { color: gridColor(), drawBorder: false },
-      ticks: { color: tickColor(), font: { size: 11 } },
-      beginAtZero: true,
-      ...(label ? { title: { display:true, text:label, color:tickColor(), font:{size:10} } } : {})
-    });
-    const tooltip = () => ({
-      backgroundColor: tooltipBg(), borderColor: tooltipBdr(), borderWidth:1,
-      titleColor: isDark() ? '#d8dae8' : '#1a1d2e', bodyColor: tickColor(),
-      padding:10, cornerRadius:6, titleFont:{size:12,weight:'600'}, bodyFont:{size:11}
-    });
-    const legend = (pos='top') => ({
-      position: pos, align:'end',
-      labels: { boxWidth:10, padding:14, color: tickColor() }
-    });
-
-    /* ── SEED DATA ─────────────────────────────────────────── */
-    const LANGS = ['Hindi','Telugu','Tamil','Kannada','Malayalam','Marathi',
-                   'Bengali','Gujarati','Punjabi','Odia','Urdu','Assamese'];
-    const ACCENTS = {
-      Hindi:['Delhi','UP','Bihar','Rajasthani'],
-      Telugu:['Andhra','Telangana','Rayalaseema'],
-      Tamil:['Chennai','Madurai','Coimbatore'],
-      Kannada:['Bengaluru','Mysuru','Dharwad'],
-      Malayalam:['Kochi','Trivandrum','Kozhikode'],
-      Marathi:['Pune','Mumbai','Nagpur'],
-      Bengali:['Kolkata','Dhaka','Sylhet'],
-      Gujarati:['Ahmedabad','Surat','Vadodara'],
-      Punjabi:['Amritsar','Ludhiana','Chandigarh'],
-      Odia:['Bhubaneswar','Cuttack','Sambalpur'],
-      Urdu:['Hyderabad','Lucknow','Delhi'],
-      Assamese:['Guwahati','Dibrugarh','Silchar']
-    };
-    const SRCS   = ['open_source','recorded','vendor'];
-    const LICS   = ['approved','approved','approved','approved','pending','rejected'];
-    const STAGES = ['intake','qc','scored','training','approved','rejected'];
-    const PERSONS= ['Ravi K.','Priya S.','Meena T.','Arjun R.','Divya M.',
-                    'Sundar P.','Leela V.','Karan B.','Neha G.','Rohit J.'];
-
-    function mkDS(i) {
-      const lang   = LANGS[i % LANGS.length];
-      const accent = ACCENTS[lang][i % ACCENTS[lang].length];
-      const src    = SRCS[i % SRCS.length];
-      const raw    = parseFloat((10 + ((i * 7.3) % 110)).toFixed(1));
-      const clean  = parseFloat((raw * (0.70 + ((i * 0.013) % 0.26))).toFixed(1));
-      const lic    = LICS[i % LICS.length];
-      return {
-        id         : `DS-${String(i + 1).padStart(3,'0')}`,
-        name       : `${lang} ${accent} ${src === 'open_source' ? 'OSS' : src.charAt(0).toUpperCase() + src.slice(1)} v${(i % 4) + 1}`,
-        language   : lang, accent, source: src,
-        rawHours   : raw, cleanHours: clean,
-        clips      : Math.round(raw * (420 + (i * 11) % 220)),
-        speakers   : 20 + (i * 17) % 160,
-        license    : lic,
-        status     : lic === 'rejected' ? 'rejected' : STAGES[i % STAGES.length],
-        assignedTo : PERSONS[i % PERSONS.length]
-      };
-    }
-    const DS = Array.from({ length: 48 }, (_, i) => mkDS(i));
-
-    /* ── CHART 1 — Source Type Doughnut ───────────────────── */
-    const srcEl = document.getElementById('chartSourceType');
-    if (srcEl) {
-      const srcMap = DS.reduce((a, d) => {
-        const k = d.source === 'open_source' ? 'Open Source'
-                  : d.source.charAt(0).toUpperCase() + d.source.slice(1);
-        a[k] = (a[k] || 0) + 1;
-        return a;
-      }, {});
-      new Chart(srcEl, {
-        type: 'doughnut',
-        data: {
-          labels: Object.keys(srcMap),
-          datasets: [{
-            data: Object.values(srcMap),
-            backgroundColor: [C.a(C.accent,0.85), C.a(C.green,0.85), C.a(C.cyan,0.85)],
-            borderWidth: 2,
-            borderColor: isDark() ? '#161820' : '#ffffff',
-            hoverOffset: 8
-          }]
-        },
-        options: {
-          responsive: true, maintainAspectRatio: false, cutout: '70%',
-          plugins: { legend: legend('right'), tooltip: { ...tooltip() } }
-        }
-      });
-    }
-
-    /* ── CHART 2 — Raw vs Clean Grouped Bar ───────────────── */
-    const rawCleanEl = document.getElementById('chartRawVsClean');
-    if (rawCleanEl) {
-      const langMap = {};
-      DS.forEach(d => {
-        if (!langMap[d.language]) langMap[d.language] = { raw: 0, clean: 0 };
-        langMap[d.language].raw   += d.rawHours;
-        langMap[d.language].clean += d.cleanHours;
-      });
-      const lKeys = Object.keys(langMap).sort();
-      new Chart(rawCleanEl, {
-        type: 'bar',
-        data: {
-          labels: lKeys,
-          datasets: [
-            {
-              label: 'Raw Hours',
-              data: lKeys.map(l => +langMap[l].raw.toFixed(1)),
-              backgroundColor: C.a(C.cyan, 0.55), borderColor: C.cyan,
-              borderWidth: 1, borderRadius: 4
-            },
-            {
-              label: 'Clean Hours',
-              data: lKeys.map(l => +langMap[l].clean.toFixed(1)),
-              backgroundColor: C.a(C.green, 0.70), borderColor: C.green,
-              borderWidth: 1, borderRadius: 4
-            }
-          ]
-        },
-        options: {
-          responsive: true, maintainAspectRatio: false,
-          interaction: { mode: 'index', intersect: false },
-          plugins: { legend: legend('top'), tooltip: { ...tooltip() } },
-          scales: { x: xScale(), y: yScale('Hours') }
-        }
-      });
-      // store langMap for later charts
-      window.__diLangMap  = langMap;
-      window.__diLKeys    = lKeys;
-    }
-
-    /* ── CHART 3 — License Status Bar ─────────────────────── */
-    const licEl = document.getElementById('chartLicenseStatus');
-    if (licEl) {
-      const licCounts = DS.reduce((a, d) => { a[d.license] = (a[d.license] || 0) + 1; return a; }, {});
-      const licColor  = { approved: C.green, pending: C.amber, rejected: C.red };
-      const licKeys   = ['approved', 'pending', 'rejected'];
-      new Chart(licEl, {
-        type: 'bar',
-        data: {
-          labels: licKeys.map(k => k.charAt(0).toUpperCase() + k.slice(1)),
-          datasets: [{
-            label: 'Datasets',
-            data: licKeys.map(k => licCounts[k] || 0),
-            backgroundColor: licKeys.map(k => C.a(licColor[k], 0.75)),
-            borderColor    : licKeys.map(k => licColor[k]),
-            borderWidth: 1, borderRadius: 5
-          }]
-        },
-        options: {
-          responsive: true, maintainAspectRatio: false,
-          plugins: { legend: { display: false }, tooltip: { ...tooltip() } },
-          scales: { x: xScale(), y: { ...yScale('Count'), ticks: { ...yScale('Count').ticks, stepSize: 1 } } }
-        }
-      });
-    }
-
-    /* ── CHART 4 — Speaker Count Bar ──────────────────────── */
-    const spkEl = document.getElementById('chartSpeakerCount');
-    if (spkEl) {
-      const spkMap = {};
-      DS.forEach(d => { spkMap[d.language] = (spkMap[d.language] || 0) + d.speakers; });
-      const spkKeys   = Object.keys(spkMap).sort();
-      const spkColors = [C.accent,C.green,C.cyan,C.amber,C.purple,C.pink,
-                         C.orange,C.red,'#14b8a6','#3b82f6','#f43f5e','#84cc16'];
-      new Chart(spkEl, {
-        type: 'bar',
-        data: {
-          labels: spkKeys,
-          datasets: [{
-            label: 'Speakers',
-            data: spkKeys.map(k => spkMap[k]),
-            backgroundColor: spkKeys.map((_, i) => C.a(spkColors[i % spkColors.length], 0.75)),
-            borderColor    : spkKeys.map((_, i) => spkColors[i % spkColors.length]),
-            borderWidth: 1, borderRadius: 4
-          }]
-        },
-        options: {
-          responsive: true, maintainAspectRatio: false,
-          plugins: { legend: { display: false }, tooltip: { ...tooltip() } },
-          scales: { x: xScale(), y: yScale('Speakers') }
-        }
-      });
-    }
-
-    /* ── CHART 5 — Clean Yield % ───────────────────────────── */
-    const yieldEl = document.getElementById('chartCleanYield');
-    if (yieldEl) {
-      const langMap = window.__diLangMap || (() => {
-        const m = {};
-        DS.forEach(d => {
-          if (!m[d.language]) m[d.language] = { raw: 0, clean: 0 };
-          m[d.language].raw   += d.rawHours;
-          m[d.language].clean += d.cleanHours;
-        });
-        return m;
-      })();
-      const lKeys      = window.__diLKeys || Object.keys(langMap).sort();
-      const yieldVals  = lKeys.map(l => +((langMap[l].clean / langMap[l].raw) * 100).toFixed(1));
-      new Chart(yieldEl, {
-        type: 'bar',
-        data: {
-          labels: lKeys,
-          datasets: [{
-            label: 'Clean Yield %',
-            data: yieldVals,
-            backgroundColor: yieldVals.map(v => v >= 85 ? C.a(C.green,0.75) : v >= 75 ? C.a(C.amber,0.75) : C.a(C.red,0.75)),
-            borderColor    : yieldVals.map(v => v >= 85 ? C.green : v >= 75 ? C.amber : C.red),
-            borderWidth: 1, borderRadius: 4
-          }]
-        },
-        options: {
-          responsive: true, maintainAspectRatio: false,
-          plugins: {
-            legend: { display: false },
-            tooltip: { ...tooltip(), callbacks: { label: ctx => ` ${ctx.parsed.y}%` } }
-          },
-          scales: { x: xScale(), y: { ...yScale('%'), max: 100 } }
-        }
-      });
-    }
-
-    /* ── CHART 6 — Pipeline Stage Doughnut ────────────────── */
-    const stageEl = document.getElementById('chartPipelineStage');
-    if (stageEl) {
-      const stageMap = DS.reduce((a, d) => {
-        const k = d.status.charAt(0).toUpperCase() + d.status.slice(1);
-        a[k] = (a[k] || 0) + 1;
-        return a;
-      }, {});
-      const stageColorMap = {
-        Intake:C.a(C.cyan,0.85), Qc:C.a(C.accent,0.85), Scored:C.a(C.purple,0.85),
-        Training:C.a(C.amber,0.85), Approved:C.a(C.green,0.85), Rejected:C.a(C.red,0.85)
-      };
-      new Chart(stageEl, {
-        type: 'doughnut',
-        data: {
-          labels: Object.keys(stageMap),
-          datasets: [{
-            data: Object.values(stageMap),
-            backgroundColor: Object.keys(stageMap).map(k => stageColorMap[k] || C.a(C.accent,0.7)),
-            borderWidth: 2,
-            borderColor: isDark() ? '#161820' : '#ffffff',
-            hoverOffset: 8
-          }]
-        },
-        options: {
-          responsive: true, maintainAspectRatio: false, cutout: '68%',
-          plugins: { legend: legend('right'), tooltip: { ...tooltip() } }
-        }
-      });
-    }
-
-    /* ── TABLE ─────────────────────────────────────────────── */
-    const licBadge = s => `<span class="di-tbl-badge di-badge-${s}">${s}</span>`;
-    const stsBadge = s => `<span class="di-tbl-badge di-badge-${s}">${s}</span>`;
-    const srcChip  = s => {
-      const cls = { open_source:'di-src-open', recorded:'di-src-recorded', vendor:'di-src-vendor' };
-      const lbl = s === 'open_source' ? 'Open Source' : s.charAt(0).toUpperCase() + s.slice(1);
-      return `<span class="di-src-chip ${cls[s] || ''}">${lbl}</span>`;
-    };
-    const maxRaw   = Math.max(...DS.map(d => d.rawHours));
-    const hoursCell = (v, max) => {
-      const pct = Math.min(100, (v / max) * 100).toFixed(0);
-      return `<div class="di-hours-cell">
-        <span style="min-width:36px;text-align:right">${v.toFixed(1)}</span>
-        <div class="di-hours-track">
-          <div class="di-hours-fill" style="width:${pct}%;background:var(--di-cyan)"></div>
-        </div></div>`;
-    };
-    const avCell = name => {
-      const ini = name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
-      return `<div class="di-assigned">
-        <div class="di-av">${ini}</div>
-        <span style="font-size:11px">${name}</span></div>`;
-    };
-
-    const tbody = document.getElementById('datasetTableBody');
-    if (tbody) {
-      tbody.innerHTML = DS.map(d => `
-        <tr>
-          <td><span class="di-ds-id">${d.id}</span></td>
-          <td style="max-width:160px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${d.name}">
-            <span style="font-size:12px;font-weight:600">${d.name}</span></td>
-          <td><span class="di-lang-pill">${d.language.slice(0,3).toUpperCase()}</span></td>
-          <td style="font-size:11px;color:var(--di-muted)">${d.accent}</td>
-          <td>${srcChip(d.source)}</td>
-          <td>${hoursCell(d.rawHours, maxRaw)}</td>
-          <td>${hoursCell(d.cleanHours, maxRaw)}</td>
-          <td style="text-align:right;font-variant-numeric:tabular-nums">${d.clips.toLocaleString()}</td>
-          <td style="text-align:right;font-variant-numeric:tabular-nums">${d.speakers}</td>
-          <td>${licBadge(d.license)}</td>
-          <td>${stsBadge(d.status)}</td>
-          <td>${avCell(d.assignedTo)}</td>
-        </tr>`).join('');
-    }
-
-    if (typeof $ !== 'undefined' && $.fn && $.fn.DataTable) {
-      $('#tblDatasets').DataTable({
-        pageLength : 10,
-        lengthMenu : [10, 25, 48],
-        order      : [[5, 'desc']],
-        language   : {
-          search: '', searchPlaceholder: 'Search datasets…',
-          lengthMenu: 'Show _MENU_',
-          info: '_START_–_END_ of _TOTAL_ datasets',
-          paginate: { previous: '‹', next: '›' }
-        },
-        columnDefs: [{ targets: [5, 6, 7, 8], className: 'dt-right' }]
-      });
-    }
-  } // end init()
-
-  /* ── SAFE EXECUTION: wait for DOM + Chart.js ─────────────── */
-  function waitForChartJs(cb, attempts) {
-    attempts = attempts || 0;
-    if (typeof Chart !== 'undefined') {
-      cb();
-    } else if (attempts < 40) {
-      setTimeout(function () { waitForChartJs(cb, attempts + 1); }, 100);
-    } else {
-      console.error('[dataset-intake] Chart.js did not load after 4 s');
-    }
-  }
-
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', function () { waitForChartJs(init); });
-  } else {
-    waitForChartJs(init);
-  }
-
+/* ── Live clock ─────────────────────────────────────────────── */
+(function tick() {
+  const el = document.getElementById('liveClock');
+  if (el) el.textContent = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+  setTimeout(tick, 1000);
 })();
+
+/* ================================================================
+   LEVEL-2: Load batches for clicked user
+   ================================================================ */
+function diLoadBatches(userName, cardIdx) {
+  const card     = document.getElementById('uc-' + cardIdx);
+  const safeUser = card.getAttribute('data-username');
+  const section  = document.getElementById('diBatchSection');
+
+  console.log('[di] cardIdx:', cardIdx);
+  console.log('[di] safeUser from DOM attr:', JSON.stringify(safeUser));
+  console.log('[di] userName from arg:', JSON.stringify(userName));
+
+  if (!safeUser) {
+    console.error('[di] safeUser is empty! Check data-username attribute in JSP.');
+    return;
+  }
+
+  if (activeCard === cardIdx && !section.classList.contains('di-hidden')) {
+    diCloseBatchSection();
+    return;
+  }
+
+  document.querySelectorAll('.di-user-card').forEach(c => c.classList.remove('di-active'));
+  document.querySelectorAll('[id^=uca-]').forEach(a => a.textContent = '›');
+
+  card.classList.add('di-active');
+  document.getElementById('uca-' + cardIdx).textContent = '⌄';
+  activeCard = cardIdx;
+  document.getElementById('diBatchUserLabel').textContent = safeUser;
+
+  const url = BASE + '/datasets/batches?userName=' + encodeURIComponent(safeUser);
+  console.log('[di] Fetching:', url);
+
+  $.getJSON(url, function (rows) {
+    console.log('[di] Rows received:', rows.length);
+    const tbody = document.getElementById('diBatchTbody');
+    tbody.innerHTML = '';
+
+    rows.forEach(r => {
+      const barCls = r.passRate >= 80 ? 'di-fill-green'
+                   : r.passRate >= 50 ? 'di-fill-orange'
+                                      : 'di-fill-red';
+      const tr = document.createElement('tr');
+      tr.style.cursor = 'pointer';
+      tr.title = 'Click to open detail drawer';
+      tr.onclick = () => diOpenDrawer(r.batchId, r.sourceName);
+      tr.innerHTML = `
+        <td><code class="di-code">${r.batchId}</code></td>
+        <td>${esc(r.sourceName)}</td>
+        <td><span class="di-badge di-badge-muted">${esc(r.sourceType)}</span></td>
+        <td>${esc(r.language)}</td>
+        <td>${esc(r.speakerName)} <span class="di-muted">${r.speakerGender ? '(' + r.speakerGender + ')' : ''}</span></td>
+        <td><span class="di-badge ${stageClass(r.currentStage)}">${r.currentStage}</span></td>
+        <td><span class="di-badge ${licClass(r.licenseStatus)}">${r.licenseStatus}</span></td>
+        <td class="di-num">${r.rawHours}</td>
+        <td class="di-num">${r.cleanHours}</td>
+        <td class="di-num">${r.totalFiles}</td>
+        <td class="di-num di-green">${r.passedFiles}</td>
+        <td class="di-num di-red">${r.failedFiles}</td>
+        <td>
+          <div class="di-mini-bar">
+            <div class="di-mini-fill ${barCls}" style="width:${r.passRate}%"></div>
+          </div>
+          <span class="di-num">${r.passRate}%</span>
+        </td>
+        <td class="di-muted">${r.createdAt}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+
+    if (batchDT) { batchDT.destroy(); batchDT = null; }
+    batchDT = $('#diBatchTable').DataTable({
+      pageLength: 10,
+      order: [],
+      scrollX: true,
+      dom: '<"di-dt-top"lf>rt<"di-dt-bot"ip>',
+      language: { search: '', searchPlaceholder: 'Search batches…' }
+    });
+
+    section.classList.remove('di-hidden');
+    section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  }).fail(function (xhr, status, err) {
+    console.error('[di] AJAX failed:', status, err, xhr.responseText);
+  });
+}
+
+function diCloseBatchSection() {
+  document.getElementById('diBatchSection').classList.add('di-hidden');
+  document.querySelectorAll('.di-user-card').forEach(c => c.classList.remove('di-active'));
+  document.querySelectorAll('[id^=uca-]').forEach(a => a.textContent = '›');
+  activeCard = null;
+}
+
+/* ================================================================
+   LEVEL-3: Open drawer for a batch
+   ================================================================ */
+function diOpenDrawer(batchId, sourceName) {
+  const drawer = document.getElementById('diDrawer');
+  drawer.classList.add('di-open');
+  document.body.style.overflow = 'hidden';
+
+  document.getElementById('diDrawerTitle').textContent = sourceName || batchId;
+  document.getElementById('diDrawerSub').textContent   = batchId;
+  document.getElementById('diChunkCount').textContent  = '…';
+  document.getElementById('diBatchInfoGrid').innerHTML = skelGrid(10);
+  document.getElementById('diMetricsRow').innerHTML    = skelRow(7);
+  destroyCharts();
+
+  Promise.all([
+    fetchJ('/datasets/batch-detail?batchId=' + enc(batchId)),
+    fetchJ('/datasets/failures?batchId='     + enc(batchId)),
+    fetchJ('/datasets/qc-score?batchId='     + enc(batchId))
+  ]).then(([detail, failures, qcScore]) => {
+    renderBatchInfo(detail);
+    renderMetrics(detail);
+    renderFailChart(failures);
+    renderQcChart(qcScore);
+  }).catch(console.error);
+
+  initChunkTable(batchId);
+}
+
+function diCloseDrawer() {
+  document.getElementById('diDrawer').classList.remove('di-open');
+  document.body.style.overflow = '';
+  destroyCharts();
+}
+
+/* ── Renderers ─────────────────────────────────────────────── */
+function renderBatchInfo(d) {
+  document.getElementById('diBatchInfoGrid').innerHTML = `
+    ${ii('Batch ID',           `<code class="di-code">${d.batch_id || '–'}</code>`)}
+    ${ii('Source',             esc(d.source_name))}
+    ${ii('Type',               `<span class="di-badge di-badge-muted">${d.source_type || '–'}</span>`)}
+    ${ii('Speaker',            `${esc(d.speaker_name)} <span class="di-muted">(${esc(d.speaker_gender)})</span>`)}
+    ${ii('Stage',              `<span class="di-badge ${stageClass(d.current_stage)}">${d.current_stage || '–'}</span>`)}
+    ${ii('License',            `<span class="di-badge ${licClass(d.status)}">${d.status || '–'}</span>`)}
+    ${ii('Created',            `<span class="di-muted">${d.createdAt || '–'}</span>`)}
+    ${ii('Updated',            `<span class="di-muted">${d.updatedAt || '–'}</span>`)}
+    ${ii('S3 Path',            `<span class="di-muted di-small">${d.s3_prefix_path || '–'}</span>`)}
+    ${ii('Source URL',         `<span class="di-muted di-small">${d.source_url || '–'}</span>`)}
+    <div class="di-info-divider" style="grid-column:1/-1">⚙️ Init Config — QC Thresholds</div>
+    ${ii('Min SNR (dB)',       `<span class="di-cfg-val">${d.cfgSnr              ?? '–'}</span>`)}
+    ${ii('Max Silence Ratio',  `<span class="di-cfg-val">${d.cfgSilenceRatio     ?? '–'}</span>`)}
+    ${ii('Max Clipping',       `<span class="di-cfg-val">${d.cfgClipping         ?? '–'}</span>`)}
+    ${ii('Min Speaker Sim',    `<span class="di-cfg-val">${d.cfgSpeakerSimilarity ?? '–'}</span>`)}
+    ${ii('Sampling Rate (Hz)', `<span class="di-cfg-val">${d.cfgSamplingRate      ?? '–'}</span>`)}
+    ${ii('Dedup Check',        `<span class="di-cfg-val">${d.cfgDuplication != null ? (d.cfgDuplication ? 'Yes' : 'No') : '–'}</span>`)}
+  `;
+}
+
+function renderMetrics(d) {
+  const pr = d.totalFiles > 0 ? ((d.passedFiles / d.totalFiles) * 100).toFixed(1) : 0;
+  const yr = d.totalHours > 0 ? ((d.passedHours / d.totalHours) * 100).toFixed(1) : 0;
+  document.getElementById('diMetricsRow').innerHTML = `
+    ${mc('blue',   d.totalFiles,        'Total Files')}
+    ${mc('green',  d.passedFiles,       'Passed')}
+    ${mc('red',    d.failedFiles,       'Failed')}
+    ${mc('teal',   d.totalHours  + 'h', 'Raw Hours')}
+    ${mc('cyan',   d.passedHours + 'h', 'Clean Hours')}
+    ${mc('lime',   pr + '%',            'Pass Rate')}
+    ${mc('orange', yr + '%',            'Clean Yield')}
+  `;
+}
+
+function initChunkTable(batchId) {
+  if (chunkDT) { chunkDT.destroy(); chunkDT = null; }
+
+  chunkDT = $('#diChunkTable').DataTable({
+    processing: true,
+    serverSide: true,
+    pageLength: 25,
+    lengthMenu: [10, 25, 50, 100],
+    scrollX: true,
+    dom: '<"di-dt-top"lf>rt<"di-dt-bot"ip>',
+    language: {
+      search: '',
+      searchPlaceholder: 'Search chunks…',
+      processing: '<div class="di-spinner">Loading…</div>'
+    },
+    ajax: {
+      url:  BASE + '/datasets/chunks',
+      type: 'GET',
+      data: function (d) { d.batchId = batchId; return d; },
+      dataSrc: function (json) {
+        document.getElementById('diChunkCount').textContent = json.recordsTotal;
+        return json.data;
+      },
+      error: function (xhr, err) {
+        console.error('[di] Chunks AJAX error:', err, xhr.responseText);
+      }
+    },
+    columns: [
+      { data: 'chunk_id',          render: v => `<code class="di-code di-small">${v}</code>` },
+      { data: 'video_id',          render: v => `<span class="di-muted di-small">${v || '–'}</span>` },
+      { data: 'startSec',          className: 'di-num' },
+      { data: 'endSec',            className: 'di-num' },
+      { data: 'duration',          className: 'di-num' },
+      { data: 'language',          render: v => v || '–' },
+      { data: 'snrDb',             className: 'di-num' },
+      { data: 'silenceRatio',      className: 'di-num' },
+      { data: 'clippingRatio',     className: 'di-num' },
+      { data: 'speakerSimilarity', className: 'di-num' },
+      {
+        data: 'duplicate', orderable: false,
+        render: v => v
+          ? '<span class="di-badge di-badge-warn">DUP</span>'
+          : '<span class="di-badge di-badge-ok">—</span>'
+      },
+      {
+        data: 'passed', orderable: false,
+        render: v => `<span class="${v ? 'di-green' : 'di-red'} di-num">${v ? '✓' : '✗'}</span>`
+      },
+      {
+        data: 'qcPassed', orderable: false,
+        render: v => `<span class="${v ? 'di-green' : 'di-red'} di-num">${v ? '✓' : '✗'}</span>`
+      },
+      {
+        data: 'failureReasons', orderable: false,
+        render: v => `<span class="di-small di-muted">${v === '-' ? '' : esc(v)}</span>`
+      },
+      {
+        data: 'transcript', orderable: false,
+        render: (v) => `<span class="di-small di-transcript" title="${esc(v)}">${trunc(v, 45)}</span>`
+      }
+    ],
+    order: [[2, 'asc']]
+  });
+}
+
+function renderFailChart(data) {
+  const ctx = document.getElementById('diFailChart').getContext('2d');
+  if (failChart) failChart.destroy();
+  failChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: data.map(d => d.reason),
+      datasets: [{
+        label: 'Failures',
+        data: data.map(d => d.failCount),
+        backgroundColor: ['#f2495c', '#ff9830', '#fade2a', '#73bf69', '#b877d9'],
+        borderRadius: 4,
+        barPercentage: 0.55
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: '#8e9199', font: { size: 11 } }, grid: { color: '#23262b' } },
+        y: { ticks: { color: '#8e9199' }, grid: { color: '#23262b' }, beginAtZero: true }
+      }
+    }
+  });
+}
+
+function renderQcChart(qc) {
+  const ctx = document.getElementById('diQcChart').getContext('2d');
+  if (qcChart) qcChart.destroy();
+  if (!qc || qc.q1_score == null) {
+    document.querySelector('#diQcPanel .di-panel-body').innerHTML =
+      '<div class="di-empty-sm">No QC scoring data for this batch</div>';
+    return;
+  }
+  qcChart = new Chart(ctx, {
+    type: 'radar',
+    data: {
+      labels: ['Naturalness', 'Clarity', 'Accent', 'Pace', 'Pronunciation', 'Overall'],
+      datasets: [{
+        label: 'Score',
+        data: [qc.q1_score, qc.q2_score, qc.q3_score, qc.q4_score, qc.q5_score, qc.q6_score],
+        borderColor: '#5794f2',
+        backgroundColor: 'rgba(87,148,242,0.15)',
+        pointBackgroundColor: '#5794f2',
+        pointRadius: 4,
+        borderWidth: 2
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        r: {
+          min: 0, max: 5,
+          ticks: { stepSize: 1, color: '#8e9199', backdropColor: 'transparent' },
+          grid: { color: '#2c3235' },
+          pointLabels: { color: '#ccccdc', font: { size: 11 } }
+        }
+      }
+    }
+  });
+}
+
+/* ── Helpers ───────────────────────────────────────────────── */
+function stageClass(s) {
+  s = (s || '').toLowerCase();
+  return s === 'approved' ? 'di-badge-success'
+       : s === 'training' ? 'di-badge-info'
+       : s === 'qc'       ? 'di-badge-warn'
+       : s === 'scored'   ? 'di-badge-purple'
+                          : 'di-badge-muted';
+}
+
+function licClass(s) {
+  s = (s || '').toLowerCase();
+  return s === 'approved' ? 'di-badge-success'
+       : s === 'pending'  ? 'di-badge-warn'
+       : s === 'rejected' ? 'di-badge-danger'
+                          : 'di-badge-muted';
+}
+
+function ii(k, v)    { return `<div class="di-info-item"><div class="di-info-key">${k}</div><div class="di-info-val">${v}</div></div>`; }
+function mc(c, v, l) { return `<div class="di-m-card di-m-${c}"><div class="di-m-val">${v}</div><div class="di-m-lbl">${l}</div></div>`; }
+function skelGrid(n) { return Array.from({length: n}, () => `<div class="di-info-item"><div class="di-skel-line"></div><div class="di-skel-line di-skel-short"></div></div>`).join(''); }
+function skelRow(n)  { return Array.from({length: n}, () => `<div class="di-m-card di-m-blue"><div class="di-skel-line"></div><div class="di-skel-line di-skel-short"></div></div>`).join(''); }
+function fetchJ(p)   { return fetch(BASE + p).then(r => r.json()); }
+function enc(s)      { return encodeURIComponent(s); }
+function esc(s)      { if (!s) return '–'; return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function trunc(s, n) { if (!s) return '–'; return s.length > n ? s.substring(0, n) + '…' : s; }
+
+function destroyCharts() {
+  if (failChart) { failChart.destroy(); failChart = null; }
+  if (qcChart)   { qcChart.destroy();   qcChart   = null; }
+}
